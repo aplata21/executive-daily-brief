@@ -128,23 +128,13 @@ def _build_email_context(emails: List[Dict]) -> Tuple[str, int]:
     return context, emails_included
 
 
-def _get_openai_client(openai_key: str, azure_endpoint: Optional[str] = None) -> OpenAI:
-    """Create an OpenAI client configured for Azure or public OpenAI."""
-    if azure_endpoint:
-        return OpenAI(
-            api_key=openai_key,
-            base_url=azure_endpoint.rstrip("/"),
-            default_query={"api-version": "2024-12-01"}
-        )
+def _get_openai_client(openai_key: str) -> OpenAI:
+    """Create a public OpenAI client."""
     return OpenAI(api_key=openai_key)
 
 
 def _analyze_emails_with_openai(openai_key: str, email_context: str, model: str, azure_endpoint: Optional[str] = None) -> str:
-    """Analyze emails using OpenAI.
-    
-    Note: Prompt caching (ephemeral or standard) won't benefit daily-scheduled
-    functions since cache expires before next execution. Using simpler approach.
-    """
+    """Analyze emails using OpenAI or Azure OpenAI endpoint."""
     prompt = f"""Analyze these executive emails concisely. Identify:
 - Priorities and high-impact items
 - Blockers and risks
@@ -154,20 +144,42 @@ EMAILS:
 {email_context}"""
 
     try:
-        client = _get_openai_client(openai_key, azure_endpoint)
+        if azure_endpoint:
+            url = azure_endpoint.rstrip("/")
+            if not url.endswith(".openai.azure.com"):
+                raise ValueError("Invalid Azure OpenAI endpoint format")
+            deployment = model
+            request_url = f"{url}/openai/deployments/{deployment}/chat/completions?api-version=2024-12-01"
+            headers = {
+                "Content-Type": "application/json",
+                "api-key": openai_key
+            }
+            response = requests.post(
+                request_url,
+                headers=headers,
+                json={
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.5,
+                    "max_tokens": 800
+                },
+                timeout=REQUEST_TIMEOUT
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
+
+        client = _get_openai_client(openai_key)
         completion = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.5,
             max_tokens=800
         )
-        
         usage = completion.usage
         logging.info(
             f"OpenAI tokens - Input: {usage.prompt_tokens}, Output: {usage.completion_tokens}, "
             f"Total cost: ~${(usage.prompt_tokens * 0.15 + usage.completion_tokens * 0.60) / 1_000_000:.6f}"
         )
-        
         return completion.choices[0].message.content
     except Exception as e:
         logging.error(f"OpenAI analysis failed: {str(e)}")
