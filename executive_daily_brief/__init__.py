@@ -6,8 +6,8 @@ import azure.functions as func
 from openai import OpenAI
 from datetime import datetime, timedelta, timezone
 
-def main(mytimer: func.TimerRequest) -> None:
 
+def main(mytimer: func.TimerRequest) -> None:
     logging.info("Starting Executive Daily Brief")
 
     tenant_id = os.environ["TENANT_ID"]
@@ -31,23 +31,28 @@ def main(mytimer: func.TimerRequest) -> None:
     since = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
 
     url = (
-    f"https://graph.microsoft.com/v1.0/users/{user_email}/mailFolders/inbox/messages"
-    f"?$top=50"
-    f"&$filter=receivedDateTime ge {since} and isRead eq false"
-    f"&$select=id,subject,bodyPreview,from,receivedDateTime,isRead"
-)
+        f"https://graph.microsoft.com/v1.0/users/{user_email}/mailFolders/inbox/messages"
+        f"?$top=50"
+        f"&$filter=receivedDateTime ge {since} and isRead eq false"
+        f"&$select=id,subject,bodyPreview,from,receivedDateTime,isRead"
+    )
 
     response = requests.get(
         url,
         headers={"Authorization": f"Bearer {access_token}"}
     )
+    response.raise_for_status()
 
     emails = response.json().get("value", [])
+
+    if not emails:
+        logging.info("No unread emails found in the last 4 days.")
+        return
 
     context = ""
 
     for email in emails:
-        context += f'''
+        context += f"""
 From: {email.get("from", {}).get("emailAddress", {}).get("address")}
 
 Subject: {email.get("subject")}
@@ -55,7 +60,7 @@ Subject: {email.get("subject")}
 Body: {email.get("bodyPreview")}
 
 ------------------------
-'''
+"""
 
     client = OpenAI(api_key=openai_key)
 
@@ -64,7 +69,7 @@ Body: {email.get("bodyPreview")}
         input=f"""
 Act as a senior executive assistant specialized in strategic decision-making.
 
-Analyze these emails from the last 4 days.
+Analyze these unread emails from the last 4 days.
 
 Identify:
 - priorities
@@ -100,26 +105,27 @@ EMAILS:
     summary = completion.output_text
 
     logging.info(summary)
+    print(summary)
 
-print(summary)
+    for email in emails:
+        message_id = email.get("id")
 
-for email in emails:
-    message_id = email.get("id")
+        if not message_id:
+            continue
 
-    if not message_id:
-        continue
+        mark_read_url = (
+            f"https://graph.microsoft.com/v1.0/users/{user_email}/messages/{message_id}"
+        )
 
-    mark_read_url = (
-        f"https://graph.microsoft.com/v1.0/users/{user_email}/messages/{message_id}"
-    )
+        mark_read_response = requests.patch(
+            mark_read_url,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            json={"isRead": True}
+        )
 
-    requests.patch(
-        mark_read_url,
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "isRead": True
-        }
-    )
+        mark_read_response.raise_for_status()
+
+    logging.info(f"Marked {len(emails)} emails as read.")
