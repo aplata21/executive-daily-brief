@@ -16,11 +16,13 @@ MAX_PROMPT_CHARS = 8000  # Reduced for token efficiency
 BATCH_SIZE = 20
 MAX_BATCH_RETRIES = 3
 BATCH_RETRY_DELAY = 2  # seconds
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
 
 def _validate_environment() -> Dict[str, str]:
     """Validate and retrieve required environment variables."""
     required_vars = ["TENANT_ID", "CLIENT_ID", "CLIENT_SECRET", "OPENAI_API_KEY", "User_email"]
+    optional_vars = ["AZURE_OPENAI_ENDPOINT", "OPENAI_MODEL"]
     config = {}
     
     for var in required_vars:
@@ -28,6 +30,12 @@ def _validate_environment() -> Dict[str, str]:
         if not value:
             raise ValueError(f"Missing required environment variable: {var}")
         config[var] = value
+    
+    for var in optional_vars:
+        config[var] = os.environ.get(var, "")
+    
+    if not config["OPENAI_MODEL"]:
+        config["OPENAI_MODEL"] = DEFAULT_OPENAI_MODEL
     
     return config
 
@@ -120,7 +128,19 @@ def _build_email_context(emails: List[Dict]) -> Tuple[str, int]:
     return context, emails_included
 
 
-def _analyze_emails_with_openai(openai_key: str, email_context: str) -> str:
+def _get_openai_client(openai_key: str, azure_endpoint: Optional[str] = None) -> OpenAI:
+    """Create an OpenAI client configured for Azure or public OpenAI."""
+    if azure_endpoint:
+        return OpenAI(
+            api_key=openai_key,
+            api_base=azure_endpoint,
+            api_type="azure",
+            api_version="2024-12-01"
+        )
+    return OpenAI(api_key=openai_key)
+
+
+def _analyze_emails_with_openai(openai_key: str, email_context: str, model: str, azure_endpoint: Optional[str] = None) -> str:
     """Analyze emails using OpenAI.
     
     Note: Prompt caching (ephemeral or standard) won't benefit daily-scheduled
@@ -128,22 +148,21 @@ def _analyze_emails_with_openai(openai_key: str, email_context: str) -> str:
     """
     prompt = f"""Analyze these executive emails concisely. Identify:
 - Priorities and high-impact items
-- Blockers and risks  
+- Blockers and risks
 - Deadlines and action items
 
 EMAILS:
 {email_context}"""
 
     try:
-        client = OpenAI(api_key=openai_key)
+        client = _get_openai_client(openai_key, azure_endpoint)
         completion = client.chat.completions.create(
-            model="gpt-4-mini",
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.5,
             max_tokens=800
         )
         
-        # Log token usage for cost monitoring
         usage = completion.usage
         logging.info(
             f"OpenAI tokens - Input: {usage.prompt_tokens}, Output: {usage.completion_tokens}, "
@@ -303,7 +322,12 @@ def main(mytimer: func.TimerRequest) -> None:
             return
         
         # Analyze with OpenAI
-        summary = _analyze_emails_with_openai(config["OPENAI_API_KEY"], email_context)
+        summary = _analyze_emails_with_openai(
+            config["OPENAI_API_KEY"],
+            email_context,
+            config["OPENAI_MODEL"],
+            config.get("AZURE_OPENAI_ENDPOINT") or None
+        )
         
         # Send brief
         _send_brief_email(config["User_email"], access_token, summary)
