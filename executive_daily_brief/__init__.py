@@ -31,11 +31,11 @@ def main(mytimer: func.TimerRequest) -> None:
     since = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
 
     url = (
-        f"https://graph.microsoft.com/v1.0/users/{user_email}/mailFolders/inbox/messages"
-        f"?$top=50"
-        f"&$filter=receivedDateTime ge {since}"
-        f"&$select=id,subject,bodyPreview,from"
-    )
+    f"https://graph.microsoft.com/v1.0/users/{user_email}/mailFolders/inbox/messages"
+    f"?$top=50"
+    f"&$filter=receivedDateTime ge {since} and isRead eq false"
+    f"&$select=id,subject,bodyPreview,from,receivedDateTime,isRead"
+)
 
     response = requests.get(
         url,
@@ -101,4 +101,25 @@ EMAILS:
 
     logging.info(summary)
 
-    print(summary)
+print(summary)
+
+for email in emails:
+    message_id = email.get("id")
+
+    if not message_id:
+        continue
+
+    mark_read_url = (
+        f"https://graph.microsoft.com/v1.0/users/{user_email}/messages/{message_id}"
+    )
+
+    requests.patch(
+        mark_read_url,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "isRead": True
+        }
+    )
