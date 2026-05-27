@@ -6,7 +6,7 @@ import msal
 import azure.functions as func
 from openai import OpenAI
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 
 
 # Configuration constants
