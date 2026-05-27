@@ -22,7 +22,7 @@ DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 def _validate_environment() -> Dict[str, str]:
     """Validate and retrieve required environment variables."""
     required_vars = ["TENANT_ID", "CLIENT_ID", "CLIENT_SECRET", "OPENAI_API_KEY", "User_email"]
-    optional_vars = ["AZURE_OPENAI_ENDPOINT", "OPENAI_MODEL"]
+    optional_vars = ["OPENAI_MODEL"]
     config = {}
     
     for var in required_vars:
@@ -129,57 +129,42 @@ def _build_email_context(emails: List[Dict]) -> Tuple[str, int]:
 
 
 def _get_openai_client(openai_key: str) -> OpenAI:
-    """Create a public OpenAI client."""
-    return OpenAI(api_key=openai_key)
+    """Create a public OpenAI client using the official OpenAI endpoint."""
+    return OpenAI(api_key=openai_key, base_url="https://api.openai.com/v1")
 
 
-def _analyze_emails_with_openai(openai_key: str, email_context: str, model: str, azure_endpoint: Optional[str] = None) -> str:
-    """Analyze emails using OpenAI or Azure OpenAI endpoint."""
-    prompt = f"""Analyze these executive emails concisely. Identify:
-- Priorities and high-impact items
-- Blockers and risks
-- Deadlines and action items
-
-EMAILS:
-{email_context}"""
+def _analyze_emails_with_openai(openai_key: str, email_context: str, model: str) -> str:
+    """Analyze emails using the public OpenAI API in Spanish."""
+    prompt = (
+        "A continuación hay mensajes de correo que deben resumirse para un ejecutivo. "
+        "Genera un resumen claro, conciso y organizado en español, usando secciones con viñetas: "
+        "Prioridades, Riesgos/Bloqueos, Plazos, Acciones recomendadas. "
+        "Presenta la información de forma profesional y directa. No escribas en inglés.\n\n"
+        "Correos:\n"
+        f"{email_context}"
+    )
 
     try:
-        if azure_endpoint:
-            url = azure_endpoint.rstrip("/")
-            if not url.endswith(".openai.azure.com"):
-                raise ValueError("Invalid Azure OpenAI endpoint format")
-            deployment = model
-            request_url = f"{url}/openai/deployments/{deployment}/chat/completions?api-version=2024-12-01"
-            headers = {
-                "Content-Type": "application/json",
-                "api-key": openai_key
-            }
-            response = requests.post(
-                request_url,
-                headers=headers,
-                json={
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.5,
-                    "max_tokens": 800
-                },
-                timeout=REQUEST_TIMEOUT
-            )
-            response.raise_for_status()
-            result = response.json()
-            return result["choices"][0]["message"]["content"]
-
         client = _get_openai_client(openai_key)
         completion = client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": "Eres un asistente que genera resúmenes ejecutivos en español y bien estructurados."},
+                {"role": "user", "content": prompt}
+            ],
             temperature=0.5,
-            max_tokens=800
+            max_tokens=900
         )
-        usage = completion.usage
-        logging.info(
-            f"OpenAI tokens - Input: {usage.prompt_tokens}, Output: {usage.completion_tokens}, "
-            f"Total cost: ~${(usage.prompt_tokens * 0.15 + usage.completion_tokens * 0.60) / 1_000_000:.6f}"
-        )
+
+        usage = getattr(completion, "usage", None)
+        if usage is not None:
+            prompt_tokens = getattr(usage, "prompt_tokens", 0)
+            completion_tokens = getattr(usage, "completion_tokens", 0)
+            logging.info(
+                f"OpenAI tokens - Input: {prompt_tokens}, Output: {completion_tokens}, "
+                f"Total approximate cost: ~${(prompt_tokens * 0.15 + completion_tokens * 0.60) / 1_000_000:.6f}"
+            )
+
         return completion.choices[0].message.content
     except Exception as e:
         logging.error(f"OpenAI analysis failed: {str(e)}")
@@ -190,12 +175,18 @@ def _send_brief_email(user_email: str, access_token: str, summary: str) -> None:
     """Send executive brief email."""
     send_email_url = f"https://graph.microsoft.com/v1.0/users/{user_email}/sendMail"
     
+    html_summary = summary.replace("\n", "<br>")
     email_payload = {
         "message": {
             "subject": "Executive Daily Brief",
             "body": {
                 "contentType": "HTML",
-                "content": f"<pre>{summary}</pre>"
+                "content": (
+                    "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#111;\">"
+                    "<h2>Resumen ejecutivo</h2>"
+                    f"<div>{html_summary}</div>"
+                    "</div>"
+                )
             },
             "toRecipients": [
                 {
@@ -231,6 +222,7 @@ def _mark_emails_as_read_batch(user_email: str, access_token: str, email_ids: Li
         return
     
     total_failed = []
+    logging.info(f"Intentando marcar {len(email_ids)} correos como leídos.")
     
     # Process in batches to avoid overwhelming the API
     for batch_num, i in enumerate(range(0, len(email_ids), BATCH_SIZE), 1):
@@ -240,7 +232,7 @@ def _mark_emails_as_read_batch(user_email: str, access_token: str, email_ids: Li
         # Retry logic for transient failures
         for attempt in range(MAX_BATCH_RETRIES):
             if attempt > 0:
-                logging.info(f"Retrying batch {batch_num} (attempt {attempt + 1}/{MAX_BATCH_RETRIES})...")
+                logging.info(f"Reintentando batch {batch_num} (intento {attempt + 1}/{MAX_BATCH_RETRIES})...")
                 time.sleep(BATCH_RETRY_DELAY)
             
             batch_requests = [
@@ -267,23 +259,20 @@ def _mark_emails_as_read_batch(user_email: str, access_token: str, email_ids: Li
                 )
                 response.raise_for_status()
                 
-                # Check for individual failures in batch response
                 batch_response = response.json()
                 batch_failures = []
                 for item in batch_response.get("responses", []):
-                    if item.get("status") >= 400:
+                    if item.get("status", 200) >= 400:
                         req_id = int(item.get("id", -1))
                         if 0 <= req_id < len(batch):
                             batch_failures.append(batch[req_id])
                 
                 if not batch_failures:
-                    # Batch succeeded completely
                     logging.info(f"Marked {len(batch)} emails as read (batch {batch_num}/{(len(email_ids) + BATCH_SIZE - 1) // BATCH_SIZE}).")
                     break
                 elif attempt < MAX_BATCH_RETRIES - 1:
-                    # Some failed, retry
-                    logging.warning(f"Batch {batch_num}: {len(batch_failures)} emails failed, retrying...")
-                    batch = batch_failures  # Retry only failed ones
+                    logging.warning(f"Batch {batch_num}: {len(batch_failures)} emails fallaron, reintentando...")
+                    batch = batch_failures
                     continue
                     
             except requests.exceptions.RequestException as e:
@@ -298,7 +287,24 @@ def _mark_emails_as_read_batch(user_email: str, access_token: str, email_ids: Li
             total_failed.extend(batch_failures)
     
     if total_failed:
-        logging.warning(f"Failed to mark {len(total_failed)} emails as read after retries. IDs: {total_failed[:5]}{'...' if len(total_failed) > 5 else ''}")
+        logging.warning(f"Fallo al marcar {len(total_failed)} correos como leídos. Probando parche individual...")
+        for msg_id in total_failed:
+            try:
+                patch_url = f"https://graph.microsoft.com/v1.0/users/{user_email}/messages/{msg_id}"
+                patch_response = requests.patch(
+                    patch_url,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json"
+                    },
+                    json={"isRead": True},
+                    timeout=REQUEST_TIMEOUT
+                )
+                patch_response.raise_for_status()
+                logging.info(f"Correo {msg_id} marcado como leído individualmente.")
+            except requests.exceptions.RequestException as e:
+                logging.error(f"No se pudo marcar el correo {msg_id} como leído: {str(e)}")
+        logging.warning(f"Proceso de marcado como leído completado con {len(total_failed)} objetos fallidos en batch.")
 
 
 def main(mytimer: func.TimerRequest) -> None:
@@ -336,8 +342,7 @@ def main(mytimer: func.TimerRequest) -> None:
         summary = _analyze_emails_with_openai(
             config["OPENAI_API_KEY"],
             email_context,
-            config["OPENAI_MODEL"],
-            config.get("AZURE_OPENAI_ENDPOINT") or None
+            config["OPENAI_MODEL"]
         )
         
         # Send brief
