@@ -1,15 +1,12 @@
-import azure.functions as func
 import logging
 import os
 import requests
 import msal
+import azure.functions as func
 from openai import OpenAI
 from datetime import datetime, timedelta, timezone
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
-
-@app.timer_trigger(schedule="0 0 11 * * *", arg_name="mytimer", run_on_startup=False)
-def executive_daily_brief(mytimer: func.TimerRequest) -> None:
+def main(mytimer: func.TimerRequest) -> None:
 
     logging.info("Starting Executive Daily Brief")
 
@@ -91,8 +88,8 @@ Return:
 4. Deadlines
 5. Blockers
 6. Dependencies
-6. Follow-ups
-7. Suggested actions
+7. Follow-ups
+8. Suggested actions
 
 EMAILS:
 
