@@ -6,7 +6,7 @@ import msal
 from openai import OpenAI
 from datetime import datetime, timedelta, timezone
 
-app = func.FunctionApp()
+app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 @app.timer_trigger(schedule="0 0 11 * * *", arg_name="mytimer", run_on_startup=False)
 def executive_daily_brief(mytimer: func.TimerRequest) -> None:
