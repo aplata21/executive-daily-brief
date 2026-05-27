@@ -134,13 +134,20 @@ def _get_openai_client(openai_key: str) -> OpenAI:
 
 
 def _analyze_emails_with_openai(openai_key: str, email_context: str, model: str) -> str:
-    """Analyze emails using the public OpenAI API in Spanish."""
+    """Analyze emails using the public OpenAI API in Spanish with metrics and deeper insights."""
     prompt = (
-        "A continuación hay mensajes de correo que deben resumirse para un ejecutivo. "
-        "Genera un resumen claro, conciso y organizado en español, usando secciones con viñetas: "
-        "Prioridades, Riesgos/Bloqueos, Plazos, Acciones recomendadas. "
-        "Presenta la información de forma profesional y directa. No escribas en inglés.\n\n"
-        "Correos:\n"
+        "ANALISIS EJECUTIVO PROFUNDO DE CORREOS\n\n"
+        "A continuacion hay mensajes de correo que requieren un analisis detallado y analitico. "
+        "Genera un resumen EN ESPAÑOL perfectamente estructurado incluyendo:\n\n"
+        "1. **CONTEXTO Y METRICAS**: Total de correos, remitentes principales, temas recurrentes, tendencias detectadas.\n"
+        "2. **ANALISIS DE PRIORIDADES**: Items criticos con justificacion de por que son prioritarios, impacto estimado, urgencia.\n"
+        "3. **RIESGOS Y BLOQUEOS**: Identificar obstaculos, riesgos operacionales, dependencias, impacto si no se resuelven.\n"
+        "4. **PLAZOS Y DEADLINES**: Listar fechas criticas con semaforo (Rojo/Amarillo/Verde). Urgencia relativa.\n"
+        "5. **ACCIONES RECOMENDADAS**: Acciones concretas por orden de impacto, responsables sugeridos, timing.\n"
+        "6. **INTELIGENCIA**: Patrones, cambios en comunicacion, stakeholders clave, oportunidades latentes.\n\n"
+        "Se especifico, usa numeros y metricas. NO seas generico. Incluye analisis de causas raiz cuando sea relevante. "
+        "Estructura con encabezados claros. No escribas en ingles.\n\n"
+        "CORREOS:"
         f"{email_context}"
     )
 
@@ -149,11 +156,11 @@ def _analyze_emails_with_openai(openai_key: str, email_context: str, model: str)
         completion = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "Eres un asistente que genera resúmenes ejecutivos en español y bien estructurados."},
+                {"role": "system", "content": "Eres un analista de negocios senior que genera resumenes ejecutivos en espanol detallados, analiticos y accionables. Incluye datos, metricas, riesgos y recomendaciones concretas. Se profesional pero directo."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.5,
-            max_tokens=900
+            temperature=0.6,
+            max_tokens=1500
         )
 
         usage = getattr(completion, "usage", None)
@@ -172,20 +179,33 @@ def _analyze_emails_with_openai(openai_key: str, email_context: str, model: str)
 
 
 def _send_brief_email(user_email: str, access_token: str, summary: str) -> None:
-    """Send executive brief email."""
+    """Send executive brief email with professional formatting."""
     send_email_url = f"https://graph.microsoft.com/v1.0/users/{user_email}/sendMail"
     
-    html_summary = summary.replace("\n", "<br>")
+    # Format summary for HTML
+    html_summary = summary.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    timestamp = datetime.now().strftime("%d de %B, %Y - %H:%M UTC")
+    
     email_payload = {
         "message": {
-            "subject": "Executive Daily Brief",
+            "subject": f"Executive Daily Brief - {datetime.now().strftime('%d/%m/%Y')}",
             "body": {
                 "contentType": "HTML",
                 "content": (
-                    "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#111;\">"
-                    "<h2>Resumen ejecutivo</h2>"
-                    f"<div>{html_summary}</div>"
+                    "<!DOCTYPE html><html><head><meta charset='UTF-8'></head><body>"
+                    "<div style='font-family: Segoe UI, Arial, sans-serif; max-width: 900px; margin: 0; background: #f5f5f5; padding: 20px;'>"
+                    "<div style='background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>"
+                    "<h1 style='color: #1f4788; margin-top: 0; border-bottom: 3px solid #0078d4; padding-bottom: 15px; font-size: 24px;'>Resumen Ejecutivo Diario</h1>"
+                    f"<p style='color: #666; font-size: 13px; margin: 10px 0;'>Generado: {timestamp}</p>"
+                    "<hr style='border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;'>"
+                    "<div style='color: #333; line-height: 1.8; font-size: 14px;'>"
+                    f"<p>{html_summary}</p>"
                     "</div>"
+                    "<hr style='border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;'>"
+                    "<footer style='color: #999; font-size: 12px; text-align: center; margin-top: 30px;'>"
+                    "<p>Este resumen fue generado automaticamente por Executive Daily Brief.</p>"
+                    "</footer>"
+                    "</div></div></body></html>"
                 )
             },
             "toRecipients": [
