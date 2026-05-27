@@ -133,9 +133,8 @@ def _get_openai_client(openai_key: str, azure_endpoint: Optional[str] = None) ->
     if azure_endpoint:
         return OpenAI(
             api_key=openai_key,
-            api_base=azure_endpoint,
-            api_type="azure",
-            api_version="2024-12-01"
+            base_url=azure_endpoint.rstrip("/"),
+            default_query={"api-version": "2024-12-01"}
         )
     return OpenAI(api_key=openai_key)
 
