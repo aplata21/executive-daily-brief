@@ -110,6 +110,39 @@ EMAILS:
     logging.info(summary)
     print(summary)
 
+    send_email_url = f"https://graph.microsoft.com/v1.0/users/{user_email}/sendMail"
+
+    email_payload = {
+        "message": {
+            "subject": "Executive Daily Brief",
+            "body": {
+                "contentType": "Text",
+                "content": summary
+            },
+            "toRecipients": [
+                {
+                    "emailAddress": {
+                        "address": user_email
+                    }
+                }
+            ]
+        },
+        "saveToSentItems": True
+    }
+
+    send_email_response = requests.post(
+        send_email_url,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        },
+        json=email_payload
+    )
+
+    send_email_response.raise_for_status()
+
+    logging.info("Executive Daily Brief email sent successfully.")
+
     for email in emails:
         message_id = email.get("id")
 
