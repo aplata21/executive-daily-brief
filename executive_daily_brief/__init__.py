@@ -28,14 +28,17 @@ def main(mytimer: func.TimerRequest) -> None:
 
     access_token = token_response["access_token"]
 
-    since = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
+    since = (
+    datetime.now(timezone.utc)
+    - timedelta(days=4)
+).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     url = (
-        f"https://graph.microsoft.com/v1.0/users/{user_email}/mailFolders/inbox/messages"
-        f"?$top=50"
-        f"&$filter=receivedDateTime ge {since} and isRead eq false"
-        f"&$select=id,subject,bodyPreview,from,receivedDateTime,isRead"
-    )
+    f"https://graph.microsoft.com/v1.0/users/{user_email}/mailFolders/inbox/messages"
+    f"?$top=50"
+    f"&$filter=(receivedDateTime ge {since}) and (isRead eq false)"
+    f"&$select=id,subject,bodyPreview,from,receivedDateTime,isRead"
+)
 
     response = requests.get(
         url,
